@@ -60,7 +60,7 @@ CITIES = {
     },
         "Helsinski": {
         "location": "EFHK:9:FI",
-        "timezone": "Europe/Helsinski",
+        "timezone": "Europe/Istanbul",
         "units": "m",
         "unit_label": "°C",
     },
