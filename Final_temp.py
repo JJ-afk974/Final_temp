@@ -54,7 +54,7 @@ CITIES = {
     },
         "Varsovie": {
         "location": "EPWA:9:PL",
-        "timezone": "Europe/Varsovie",
+        "timezone": "Europe/Paris",
         "units": "m",
         "unit_label": "°C",
     },
