@@ -28,6 +28,42 @@ CITIES = {
         "units": "m",
         "unit_label": "°C",
     },
+        "Madrid": {
+        "location": "LMED:9:ES",
+        "timezone": "Europe/Madrid",
+        "units": "m",
+        "unit_label": "°C",
+    },
+        "Milan": {
+        "location": "LIMC:9:IT",
+        "timezone": "Europe/Milan",
+        "units": "m",
+        "unit_label": "°C",
+    },
+        "Munich": {
+        "location": "EDDM:9:DE",
+        "timezone": "Europe/Munich",
+        "units": "m",
+        "unit_label": "°C",
+    },
+        "Amsterdam": {
+        "location": "EHAM:9:NL",
+        "timezone": "Europe/Amsterdam",
+        "units": "m",
+        "unit_label": "°C",
+    },
+        "Varsovie": {
+        "location": "EPWA:9:PL",
+        "timezone": "Europe/Varsovie",
+        "units": "m",
+        "unit_label": "°C",
+    },
+        "Helsinski": {
+        "location": "EFHK:9:FI",
+        "timezone": "Europe/Helsinski",
+        "units": "m",
+        "unit_label": "°C",
+    },
     "Miami": {
         "location": "KMIA:9:US",
         "timezone": "America/New_York",
