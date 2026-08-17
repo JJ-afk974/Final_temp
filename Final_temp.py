@@ -42,7 +42,7 @@ CITIES = {
     },
         "Munich": {
         "location": "EDDM:9:DE",
-        "timezone": "Europe/Munich",
+        "timezone": "Europe/Paris",
         "units": "m",
         "unit_label": "°C",
     },
