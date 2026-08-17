@@ -36,7 +36,7 @@ CITIES = {
     },
         "Milan": {
         "location": "LIMC:9:IT",
-        "timezone": "Europe/Milan",
+        "timezone": "Europe/Paris",
         "units": "m",
         "unit_label": "°C",
     },
