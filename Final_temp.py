@@ -30,7 +30,7 @@ CITIES = {
     },
         "Madrid": {
         "location": "LMED:9:ES",
-        "timezone": "Europe/Madrid",
+        "timezone": "Europe/Paris",
         "units": "m",
         "unit_label": "°C",
     },
