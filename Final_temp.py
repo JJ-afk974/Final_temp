@@ -235,7 +235,7 @@ def fetch_nws_observations(station, start_utc, end_utc):
         ts_epoch = dt_utc.timestamp()
 
         temp_f = celsius_to_fahrenheit(temp_c)
-        results.append((round(temp_f, 1), ts_epoch))
+        results.append((round(temp_f), ts_epoch))
 
     return results
 
@@ -297,6 +297,13 @@ with open(OUTPUT_FILE, "w", newline="", encoding="utf-8-sig") as f:
                 # On garde uniquement les observations de la veille
                 if dt_local.date() == yesterday:
                     temperatures.append((temp, dt_local))
+
+            # Tri chronologique croissant : indispensable pour que min()/max()
+            # retiennent la PREMIERE heure d'occurrence en cas d'égalité.
+            # (Les API ne garantissent pas toujours l'ordre chronologique :
+            # api.weather.gov, par exemple, renvoie les observations du plus
+            # récent au plus ancien.)
+            temperatures.sort(key=lambda x: x[1])
 
             if temperatures:
 
