@@ -2,7 +2,6 @@ import urllib.request
 import urllib.parse
 import json
 import csv
-import os
 import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -205,13 +204,17 @@ def extract_temperature_observations(
         except (TypeError, ValueError):
             continue
 
+        # obsTime = timestamp Unix UTC
         dt_utc = datetime.fromtimestamp(
             obs_time,
             tz=timezone.utc,
         )
 
+        # Conversion vers l'heure locale de la ville
         dt_local = dt_utc.astimezone(tz)
 
+        # On cherche exactement la date cible
+        # dans le fuseau horaire de la ville.
         if dt_local.date() != target_date:
             continue
 
@@ -219,6 +222,7 @@ def extract_temperature_observations(
             (temp_c, dt_local)
         )
 
+    # Tri chronologique
     observations.sort(
         key=lambda x: x[1]
     )
@@ -230,11 +234,13 @@ def extract_temperature_observations(
 # DATE CIBLE
 # ============================================================
 
-# La date cible est déterminée à Paris.
+# La date est calculée à Paris.
 #
 # Exemple :
-# Paris = 23/08
-# target_date = 22/08
+# 23/08 à Paris → données du 22/08
+#
+# Cette même date 22/08 est ensuite recherchée
+# dans le fuseau local de CHAQUE ville.
 
 target_date = (
     datetime.now(PARIS_TZ).date()
@@ -251,213 +257,175 @@ print(
 
 
 # ============================================================
-# LECTURE DU CSV EXISTANT
+# OUVERTURE DU CSV EN MODE AJOUT
 # ============================================================
 
-existing_rows = set()
+# IMPORTANT :
+# "a" = append
+# Les anciennes données ne sont PAS supprimées.
 
-if os.path.exists(OUTPUT_FILE):
+try:
 
     with open(
         OUTPUT_FILE,
-        "r",
+        "a",
         newline="",
         encoding="utf-8-sig",
     ) as f:
 
-        reader = csv.DictReader(
+        writer = csv.writer(
             f,
             delimiter=";",
         )
 
-        for row in reader:
-
-            city = row.get("ville")
-            date = row.get("date")
-
-            if city and date:
-                existing_rows.add(
-                    (city, date)
-                )
-
-
-# ============================================================
-# OUVERTURE EN MODE APPEND
-# ============================================================
-
-file_exists = os.path.exists(
-    OUTPUT_FILE
-)
-
-file_is_empty = (
-    not file_exists
-    or os.path.getsize(OUTPUT_FILE) == 0
-)
-
-
-with open(
-    OUTPUT_FILE,
-    "a",
-    newline="",
-    encoding="utf-8-sig",
-) as f:
-
-    writer = csv.writer(
-        f,
-        delimiter=";",
-    )
-
-    # --------------------------------------------------------
-    # En-tête uniquement si le fichier est nouveau/vide
-    # --------------------------------------------------------
-
-    if file_is_empty:
-
-        writer.writerow([
-            "ville",
-            "date",
-            "temperature_min",
-            "heure_min",
-            "temperature_max",
-            "heure_max",
-            "unite",
-        ])
-
-    # ========================================================
-    # TRAITEMENT DES VILLES
-    # ========================================================
-
-    for city, config in CITIES.items():
-
-        station = config["station"]
-        timezone_name = config["timezone"]
-        unit_label = config["unit_label"]
-
         # ----------------------------------------------------
-        # Protection contre les doublons
+        # En-tête uniquement si le fichier est vide
         # ----------------------------------------------------
 
-        if (city, target_date_str) in existing_rows:
-
-            print(
-                f"{city}: "
-                f"{target_date_str} déjà présent, "
-                f"ignoré."
-            )
-
-            continue
-
-        print(
-            f"\n{city} ({station})..."
-        )
-
-        try:
-
-            # ------------------------------------------------
-            # Récupération METAR
-            # ------------------------------------------------
-
-            data = fetch_nws_metar_observations(
-                station
-            )
-
-            print(
-                f"  {len(data)} observations reçues"
-            )
-
-            # ------------------------------------------------
-            # Filtrage sur la date cible
-            # ------------------------------------------------
-
-            observations = (
-                extract_temperature_observations(
-                    data,
-                    timezone_name,
-                    target_date,
-                )
-            )
-
-            print(
-                f"  {len(observations)} observations "
-                f"pour le {target_date_str}"
-            )
-
-            if not observations:
-
-                print(
-                    "  Aucune observation disponible"
-                )
-
-                continue
-
-            # ------------------------------------------------
-            # Conversion des températures
-            # ------------------------------------------------
-
-            temperatures = []
-
-            for temp_c, dt_local in observations:
-
-                if unit_label == "°F":
-
-                    temperature = round(
-                        celsius_to_fahrenheit(temp_c)
-                    )
-
-                else:
-
-                    temperature = round(temp_c)
-
-                temperatures.append(
-                    (temperature, dt_local)
-                )
-
-            # ------------------------------------------------
-            # MIN / MAX
-            # ------------------------------------------------
-
-            min_temp, min_time = min(
-                temperatures,
-                key=lambda x: x[0],
-            )
-
-            max_temp, max_time = max(
-                temperatures,
-                key=lambda x: x[0],
-            )
-
-            # ------------------------------------------------
-            # AJOUT AU CSV
-            # ------------------------------------------------
+        if f.tell() == 0:
 
             writer.writerow([
-                city,
-                target_date_str,
-                min_temp,
-                min_time.strftime("%H:%M:%S"),
-                max_temp,
-                max_time.strftime("%H:%M:%S"),
-                unit_label,
+                "ville",
+                "date",
+                "temperature_min",
+                "heure_min",
+                "temperature_max",
+                "heure_max",
+                "unite",
             ])
 
-            print(
-                f"  MIN : {min_temp}{unit_label} "
-                f"à {min_time.strftime('%H:%M')}"
-            )
+        # ====================================================
+        # TRAITEMENT DES VILLES
+        # ====================================================
+
+        for city, config in CITIES.items():
+
+            station = config["station"]
+            timezone_name = config["timezone"]
+            unit_label = config["unit_label"]
 
             print(
-                f"  MAX : {max_temp}{unit_label} "
-                f"à {max_time.strftime('%H:%M')}"
+                f"\n{city} ({station})..."
             )
 
-        except Exception as e:
+            try:
 
-            print(
-                f"  ERREUR : {e}"
-            )
+                # --------------------------------------------
+                # Récupération des METAR
+                # --------------------------------------------
 
-        # Petite pause entre les requêtes
-        time.sleep(1)
+                data = fetch_nws_metar_observations(
+                    station
+                )
+
+                print(
+                    f"  {len(data)} observations reçues"
+                )
+
+                # --------------------------------------------
+                # Filtrage sur la date cible
+                # --------------------------------------------
+
+                observations = (
+                    extract_temperature_observations(
+                        data,
+                        timezone_name,
+                        target_date,
+                    )
+                )
+
+                print(
+                    f"  {len(observations)} observations "
+                    f"pour le {target_date_str}"
+                )
+
+                if not observations:
+
+                    print(
+                        "  Aucune observation disponible"
+                    )
+
+                    continue
+
+                # --------------------------------------------
+                # Conversion °C / °F
+                # --------------------------------------------
+
+                temperatures = []
+
+                for temp_c, dt_local in observations:
+
+                    if unit_label == "°F":
+
+                        temperature = round(
+                            celsius_to_fahrenheit(temp_c)
+                        )
+
+                    else:
+
+                        temperature = round(temp_c)
+
+                    temperatures.append(
+                        (temperature, dt_local)
+                    )
+
+                # --------------------------------------------
+                # MINIMUM
+                # --------------------------------------------
+
+                min_temp, min_time = min(
+                    temperatures,
+                    key=lambda x: x[0],
+                )
+
+                # --------------------------------------------
+                # MAXIMUM
+                # --------------------------------------------
+
+                max_temp, max_time = max(
+                    temperatures,
+                    key=lambda x: x[0],
+                )
+
+                # --------------------------------------------
+                # AJOUT AU CSV
+                # --------------------------------------------
+
+                writer.writerow([
+                    city,
+                    target_date_str,
+                    min_temp,
+                    min_time.strftime("%H:%M:%S"),
+                    max_temp,
+                    max_time.strftime("%H:%M:%S"),
+                    unit_label,
+                ])
+
+                print(
+                    f"  MIN : {min_temp}{unit_label} "
+                    f"à {min_time.strftime('%H:%M')}"
+                )
+
+                print(
+                    f"  MAX : {max_temp}{unit_label} "
+                    f"à {max_time.strftime('%H:%M')}"
+                )
+
+            except Exception as e:
+
+                print(
+                    f"  ERREUR : {e}"
+                )
+
+            # Petite pause entre les requêtes
+            time.sleep(1)
+
+
+except Exception as e:
+
+    print(
+        f"\nERREUR lors de l'ouverture du CSV : {e}"
+    )
 
 
 # ============================================================
