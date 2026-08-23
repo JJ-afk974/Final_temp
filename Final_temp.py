@@ -2,6 +2,7 @@ import urllib.request
 import urllib.parse
 import json
 import csv
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -146,13 +147,6 @@ def celsius_to_fahrenheit(temp_c):
 # ============================================================
 
 def fetch_nws_metar_observations(station):
-    """
-    Récupère les METAR des dernières 72 heures
-    pour une station.
-
-    Source : NOAA / NWS Aviation Weather Center.
-    Aucun token ni compte nécessaire.
-    """
 
     params = {
         "ids": station,
@@ -172,6 +166,7 @@ def fetch_nws_metar_observations(station):
     )
 
     with urllib.request.urlopen(request) as response:
+
         data = json.loads(
             response.read().decode("utf-8")
         )
@@ -180,7 +175,7 @@ def fetch_nws_metar_observations(station):
 
 
 # ============================================================
-# EXTRACTION DES OBSERVATIONS DE LA DATE CIBLE
+# EXTRACTION DES OBSERVATIONS
 # ============================================================
 
 def extract_temperature_observations(
@@ -188,12 +183,6 @@ def extract_temperature_observations(
     timezone_name,
     target_date,
 ):
-    """
-    Convertit les observations UTC dans le fuseau local
-    de la ville puis conserve uniquement target_date.
-
-    target_date est la date calculée à Paris.
-    """
 
     observations = []
 
@@ -216,18 +205,13 @@ def extract_temperature_observations(
         except (TypeError, ValueError):
             continue
 
-        # obsTime = timestamp Unix UTC
         dt_utc = datetime.fromtimestamp(
             obs_time,
             tz=timezone.utc,
         )
 
-        # Conversion UTC -> heure locale de la ville
         dt_local = dt_utc.astimezone(tz)
 
-        # IMPORTANT :
-        # on compare avec la date cible calculée à Paris,
-        # et non avec "la veille" de la ville.
         if dt_local.date() != target_date:
             continue
 
@@ -243,34 +227,77 @@ def extract_temperature_observations(
 
 
 # ============================================================
-# CALCUL DE LA DATE CIBLE
+# DATE CIBLE
 # ============================================================
 
+# La date cible est déterminée à Paris.
+#
 # Exemple :
 # Paris = 23/08
 # target_date = 22/08
-#
-# Cette date sera utilisée pour TOUTES les villes.
 
 target_date = (
     datetime.now(PARIS_TZ).date()
     - timedelta(days=1)
 )
 
+target_date_str = target_date.strftime(
+    "%Y-%m-%d"
+)
 
 print(
-    f"Date cible pour toutes les villes : "
-    f"{target_date.strftime('%Y-%m-%d')}"
+    f"Date cible : {target_date_str}"
 )
 
 
 # ============================================================
-# CRÉATION DU CSV
+# LECTURE DU CSV EXISTANT
 # ============================================================
+
+existing_rows = set()
+
+if os.path.exists(OUTPUT_FILE):
+
+    with open(
+        OUTPUT_FILE,
+        "r",
+        newline="",
+        encoding="utf-8-sig",
+    ) as f:
+
+        reader = csv.DictReader(
+            f,
+            delimiter=";",
+        )
+
+        for row in reader:
+
+            city = row.get("ville")
+            date = row.get("date")
+
+            if city and date:
+                existing_rows.add(
+                    (city, date)
+                )
+
+
+# ============================================================
+# OUVERTURE EN MODE APPEND
+# ============================================================
+
+file_exists = os.path.exists(
+    OUTPUT_FILE
+)
+
+file_is_empty = (
+    not file_exists
+    or os.path.getsize(OUTPUT_FILE) == 0
+)
+
 
 with open(
     OUTPUT_FILE,
-    "w",
+    "a",
     newline="",
     encoding="utf-8-sig",
 ) as f:
@@ -280,15 +307,21 @@ with open(
         delimiter=";",
     )
 
-    writer.writerow([
-        "ville",
-        "date",
-        "temperature_min",
-        "heure_min",
-        "temperature_max",
-        "heure_max",
-        "unite",
-    ])
+    # --------------------------------------------------------
+    # En-tête uniquement si le fichier est nouveau/vide
+    # --------------------------------------------------------
+
+    if file_is_empty:
+
+        writer.writerow([
+            "ville",
+            "date",
+            "temperature_min",
+            "heure_min",
+            "temperature_max",
+            "heure_max",
+            "unite",
+        ])
 
     # ========================================================
     # TRAITEMENT DES VILLES
@@ -300,6 +333,20 @@ with open(
         timezone_name = config["timezone"]
         unit_label = config["unit_label"]
 
+        # ----------------------------------------------------
+        # Protection contre les doublons
+        # ----------------------------------------------------
+
+        if (city, target_date_str) in existing_rows:
+
+            print(
+                f"{city}: "
+                f"{target_date_str} déjà présent, "
+                f"ignoré."
+            )
+
+            continue
+
         print(
             f"\n{city} ({station})..."
         )
@@ -307,7 +354,7 @@ with open(
         try:
 
             # ------------------------------------------------
-            # Récupération des observations
+            # Récupération METAR
             # ------------------------------------------------
 
             data = fetch_nws_metar_observations(
@@ -322,15 +369,17 @@ with open(
             # Filtrage sur la date cible
             # ------------------------------------------------
 
-            observations = extract_temperature_observations(
-                data,
-                timezone_name,
-                target_date,
+            observations = (
+                extract_temperature_observations(
+                    data,
+                    timezone_name,
+                    target_date,
+                )
             )
 
             print(
                 f"  {len(observations)} observations "
-                f"pour le {target_date}"
+                f"pour le {target_date_str}"
             )
 
             if not observations:
@@ -364,7 +413,7 @@ with open(
                 )
 
             # ------------------------------------------------
-            # Température minimale
+            # MIN / MAX
             # ------------------------------------------------
 
             min_temp, min_time = min(
@@ -372,22 +421,18 @@ with open(
                 key=lambda x: x[0],
             )
 
-            # ------------------------------------------------
-            # Température maximale
-            # ------------------------------------------------
-
             max_temp, max_time = max(
                 temperatures,
                 key=lambda x: x[0],
             )
 
             # ------------------------------------------------
-            # Écriture CSV
+            # AJOUT AU CSV
             # ------------------------------------------------
 
             writer.writerow([
                 city,
-                target_date.strftime("%Y-%m-%d"),
+                target_date_str,
                 min_temp,
                 min_time.strftime("%H:%M:%S"),
                 max_temp,
@@ -420,5 +465,5 @@ with open(
 # ============================================================
 
 print(
-    f"\nTerminé : {OUTPUT_FILE} créé."
+    f"\nTerminé : {OUTPUT_FILE} mis à jour."
 )
