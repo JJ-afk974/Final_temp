@@ -137,19 +137,18 @@ def celsius_to_fahrenheit(temp_c):
     return (temp_c * 9 / 5) + 32
 
 
-def fetch_nws_metar_observations(station, start_utc, end_utc):
+def fetch_nws_metar_observations(station):
     """
-    Récupère les METAR de la station via l'API
-    Aviation Weather Center / NOAA / NWS.
+    Récupère les METAR des dernières 48 heures
+    via l'API officielle NOAA / NWS Aviation Weather Center.
 
-    La température retournée par l'API est en °C.
+    Aucun token ni compte nécessaire.
     """
 
     params = {
         "ids": station,
         "format": "json",
-        "startTime": start_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "endTime": end_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "hours": "48",
     }
 
     url = (
@@ -173,11 +172,9 @@ def fetch_nws_metar_observations(station, start_utc, end_utc):
 
 def extract_temperature_observations(data, timezone_name):
     """
-    Extrait les températures et leurs heures locales
-    depuis la réponse METAR.
-
-    Retourne :
-        [(temperature_c, datetime_local), ...]
+    Extrait :
+        température en °C
+        date/heure locale de l'observation
     """
 
     observations = []
@@ -217,7 +214,7 @@ def extract_temperature_observations(data, timezone_name):
 
 
 # ============================================================
-# TRAITEMENT
+# CRÉATION DU CSV
 # ============================================================
 
 with open(
@@ -242,6 +239,10 @@ with open(
         "unite",
     ])
 
+    # ========================================================
+    # TRAITEMENT DES VILLES
+    # ========================================================
+
     for city, config in CITIES.items():
 
         station = config["station"]
@@ -249,33 +250,12 @@ with open(
         unit_label = config["unit_label"]
 
         # ----------------------------------------------------
-        # Veille dans le fuseau horaire de la ville
+        # Veille dans le fuseau local de la ville
         # ----------------------------------------------------
 
         yesterday = (
             datetime.now(tz).date()
             - timedelta(days=1)
-        )
-
-        # ----------------------------------------------------
-        # Début et fin de la journée locale
-        # ----------------------------------------------------
-
-        start_local = datetime.combine(
-            yesterday,
-            datetime.min.time(),
-            tzinfo=tz,
-        )
-
-        end_local = start_local + timedelta(days=1)
-
-        # Conversion en UTC pour l'API
-        start_utc = start_local.astimezone(
-            timezone.utc
-        )
-
-        end_utc = end_local.astimezone(
-            timezone.utc
         )
 
         try:
@@ -285,9 +265,7 @@ with open(
             # ------------------------------------------------
 
             data = fetch_nws_metar_observations(
-                station,
-                start_utc,
-                end_utc,
+                station
             )
 
             # ------------------------------------------------
@@ -303,12 +281,15 @@ with open(
 
             for temp_c, dt_local in observations:
 
-                # Sécurité : on ne conserve que les
-                # observations appartenant à la veille locale.
+                # On conserve uniquement les observations
+                # de la veille dans le fuseau local.
                 if dt_local.date() != yesterday:
                     continue
 
-                # NWS/AWC fournit temp en °C.
+                # ------------------------------------------------
+                # Conversion selon l'unité souhaitée
+                # ------------------------------------------------
+
                 if unit_label == "°F":
                     temperature = round(
                         celsius_to_fahrenheit(temp_c)
@@ -323,8 +304,9 @@ with open(
             # ------------------------------------------------
             # Tri chronologique
             #
-            # Permet de retenir la PREMIÈRE occurrence
-            # lorsqu'une température apparaît plusieurs fois.
+            # Important :
+            # en cas d'égalité, min()/max() conserveront
+            # ainsi la première occurrence.
             # ------------------------------------------------
 
             temperatures.sort(
