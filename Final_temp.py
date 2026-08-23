@@ -20,6 +20,9 @@ NWS_HEADERS = {
 
 OUTPUT_FILE = "temperatures_veille.csv"
 
+# La date de référence est TOUJOURS celle de Paris.
+PARIS_TZ = ZoneInfo("Europe/Paris")
+
 
 CITIES = {
     "New York": {
@@ -139,24 +142,22 @@ def celsius_to_fahrenheit(temp_c):
 
 
 # ============================================================
-# RÉCUPÉRATION DES METAR POUR UNE STATION
+# RÉCUPÉRATION DES METAR
 # ============================================================
 
 def fetch_nws_metar_observations(station):
     """
-    Récupère les METAR des dernières 48 heures
+    Récupère les METAR des dernières 72 heures
     pour une station.
 
-    Source :
-        NOAA / NWS Aviation Weather Center
-
+    Source : NOAA / NWS Aviation Weather Center.
     Aucun token ni compte nécessaire.
     """
 
     params = {
         "ids": station,
         "format": "json",
-        "hours": "48",
+        "hours": "72",
     }
 
     url = (
@@ -179,20 +180,19 @@ def fetch_nws_metar_observations(station):
 
 
 # ============================================================
-# EXTRACTION DES TEMPÉRATURES
+# EXTRACTION DES OBSERVATIONS DE LA DATE CIBLE
 # ============================================================
 
 def extract_temperature_observations(
     data,
     timezone_name,
-    yesterday,
+    target_date,
 ):
     """
-    Extrait uniquement les observations de la veille
-    dans le fuseau horaire local de la station.
+    Convertit les observations UTC dans le fuseau local
+    de la ville puis conserve uniquement target_date.
 
-    Retourne :
-        [(temperature_c, datetime_local), ...]
+    target_date est la date calculée à Paris.
     """
 
     observations = []
@@ -222,23 +222,46 @@ def extract_temperature_observations(
             tz=timezone.utc,
         )
 
-        # Conversion en heure locale
+        # Conversion UTC -> heure locale de la ville
         dt_local = dt_utc.astimezone(tz)
 
-        # On ne garde que la veille locale
-        if dt_local.date() != yesterday:
+        # IMPORTANT :
+        # on compare avec la date cible calculée à Paris,
+        # et non avec "la veille" de la ville.
+        if dt_local.date() != target_date:
             continue
 
         observations.append(
             (temp_c, dt_local)
         )
 
-    # Tri chronologique
     observations.sort(
         key=lambda x: x[1]
     )
 
     return observations
+
+
+# ============================================================
+# CALCUL DE LA DATE CIBLE
+# ============================================================
+
+# Exemple :
+# Paris = 23/08
+# target_date = 22/08
+#
+# Cette date sera utilisée pour TOUTES les villes.
+
+target_date = (
+    datetime.now(PARIS_TZ).date()
+    - timedelta(days=1)
+)
+
+
+print(
+    f"Date cible pour toutes les villes : "
+    f"{target_date.strftime('%Y-%m-%d')}"
+)
 
 
 # ============================================================
@@ -277,17 +300,6 @@ with open(
         timezone_name = config["timezone"]
         unit_label = config["unit_label"]
 
-        tz = ZoneInfo(timezone_name)
-
-        # ----------------------------------------------------
-        # Date de la veille dans le fuseau local
-        # ----------------------------------------------------
-
-        yesterday = (
-            datetime.now(tz).date()
-            - timedelta(days=1)
-        )
-
         print(
             f"\n{city} ({station})..."
         )
@@ -295,7 +307,7 @@ with open(
         try:
 
             # ------------------------------------------------
-            # Une requête par station
+            # Récupération des observations
             # ------------------------------------------------
 
             data = fetch_nws_metar_observations(
@@ -307,20 +319,24 @@ with open(
             )
 
             # ------------------------------------------------
-            # Extraction de la veille
+            # Filtrage sur la date cible
             # ------------------------------------------------
 
             observations = extract_temperature_observations(
                 data,
                 timezone_name,
-                yesterday,
+                target_date,
+            )
+
+            print(
+                f"  {len(observations)} observations "
+                f"pour le {target_date}"
             )
 
             if not observations:
 
                 print(
-                    f"  Aucune observation pour "
-                    f"la veille ({yesterday})"
+                    "  Aucune observation disponible"
                 )
 
                 continue
@@ -334,10 +350,13 @@ with open(
             for temp_c, dt_local in observations:
 
                 if unit_label == "°F":
+
                     temperature = round(
                         celsius_to_fahrenheit(temp_c)
                     )
+
                 else:
+
                     temperature = round(temp_c)
 
                 temperatures.append(
@@ -345,11 +364,7 @@ with open(
                 )
 
             # ------------------------------------------------
-            # Min / Max
-            #
-            # La liste est déjà triée chronologiquement.
-            # En cas d'égalité, min()/max() retiennent donc
-            # la première occurrence.
+            # Température minimale
             # ------------------------------------------------
 
             min_temp, min_time = min(
@@ -357,18 +372,22 @@ with open(
                 key=lambda x: x[0],
             )
 
+            # ------------------------------------------------
+            # Température maximale
+            # ------------------------------------------------
+
             max_temp, max_time = max(
                 temperatures,
                 key=lambda x: x[0],
             )
 
             # ------------------------------------------------
-            # Écriture dans le CSV
+            # Écriture CSV
             # ------------------------------------------------
 
             writer.writerow([
                 city,
-                yesterday.strftime("%Y-%m-%d"),
+                target_date.strftime("%Y-%m-%d"),
                 min_temp,
                 min_time.strftime("%H:%M:%S"),
                 max_temp,
@@ -377,9 +396,12 @@ with open(
             ])
 
             print(
-                f"  min {min_temp}{unit_label} "
-                f"à {min_time.strftime('%H:%M')} | "
-                f"max {max_temp}{unit_label} "
+                f"  MIN : {min_temp}{unit_label} "
+                f"à {min_time.strftime('%H:%M')}"
+            )
+
+            print(
+                f"  MAX : {max_temp}{unit_label} "
                 f"à {max_time.strftime('%H:%M')}"
             )
 
