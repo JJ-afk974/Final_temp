@@ -382,4 +382,3 @@ with open(
 print(
     f"\nTerminé : {OUTPUT_FILE} créé."
 )
-```
