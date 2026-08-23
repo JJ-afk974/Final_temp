@@ -1,3 +1,4 @@
+```python
 import urllib.request
 import urllib.parse
 import json
@@ -6,13 +7,18 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 
-NWS_BASE_URL = "https://api.weather.gov/stations/{station}/observations"
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
-# La NWS (weather.gov) exige un User-Agent identifiable
+NWS_METAR_URL = "https://aviationweather.gov/api/data/metar"
+
 NWS_HEADERS = {
-    "User-Agent": "(temperatures-veille-script, contact@example.com)",
-    "Accept": "application/geo+json",
+    "User-Agent": "temperatures-veille-script/1.0",
+    "Accept": "application/json",
 }
+
+OUTPUT_FILE = "temperatures_veille.csv"
 
 
 CITIES = {
@@ -124,53 +130,108 @@ CITIES = {
 }
 
 
-OUTPUT_FILE = "temperatures_veille.csv"
-
+# ============================================================
+# OUTILS
+# ============================================================
 
 def celsius_to_fahrenheit(temp_c):
     return (temp_c * 9 / 5) + 32
 
 
-def fetch_nws_observations(station, start_utc, end_utc):
-    """Récupère les observations de température via l'API NWS."""
+def fetch_nws_metar_observations(station, start_utc, end_utc):
+    """
+    Récupère les METAR de la station via l'API
+    Aviation Weather Center / NOAA / NWS.
+
+    La température retournée par l'API est en °C.
+    """
+
+    params = {
+        "ids": station,
+        "format": "json",
+        "startTime": start_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "endTime": end_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
     url = (
-        NWS_BASE_URL.format(station=station)
+        NWS_METAR_URL
         + "?"
-        + urllib.parse.urlencode({
-            "start": start_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "end": end_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        })
+        + urllib.parse.urlencode(params)
     )
 
-    request = urllib.request.Request(url, headers=NWS_HEADERS)
+    request = urllib.request.Request(
+        url,
+        headers=NWS_HEADERS,
+    )
 
     with urllib.request.urlopen(request) as response:
-        data = json.loads(response.read().decode("utf-8"))
-
-    results = []
-
-    for feature in data.get("features", []):
-        properties = feature.get("properties", {})
-        temperature = properties.get("temperature", {}) or {}
-
-        temp_c = temperature.get("value")
-        timestamp = properties.get("timestamp")
-
-        if temp_c is None or timestamp is None:
-            continue
-
-        dt_utc = datetime.fromisoformat(
-            timestamp.replace("Z", "+00:00")
+        data = json.loads(
+            response.read().decode("utf-8")
         )
 
-        results.append((temp_c, dt_utc.timestamp()))
-
-    return results
+    return data
 
 
-with open(OUTPUT_FILE, "w", newline="", encoding="utf-8-sig") as f:
+def extract_temperature_observations(data, timezone_name):
+    """
+    Extrait les températures et leurs heures locales
+    depuis la réponse METAR.
 
-    writer = csv.writer(f, delimiter=";")
+    Retourne :
+        [(temperature_c, datetime_local), ...]
+    """
+
+    observations = []
+
+    tz = ZoneInfo(timezone_name)
+
+    if not isinstance(data, list):
+        return observations
+
+    for observation in data:
+
+        temp_c = observation.get("temp")
+        obs_time = observation.get("obsTime")
+
+        if temp_c is None or obs_time is None:
+            continue
+
+        try:
+            temp_c = float(temp_c)
+        except (TypeError, ValueError):
+            continue
+
+        try:
+            dt_utc = datetime.fromisoformat(
+                obs_time.replace("Z", "+00:00")
+            )
+        except ValueError:
+            continue
+
+        dt_local = dt_utc.astimezone(tz)
+
+        observations.append(
+            (temp_c, dt_local)
+        )
+
+    return observations
+
+
+# ============================================================
+# TRAITEMENT
+# ============================================================
+
+with open(
+    OUTPUT_FILE,
+    "w",
+    newline="",
+    encoding="utf-8-sig",
+) as f:
+
+    writer = csv.writer(
+        f,
+        delimiter=";",
+    )
 
     writer.writerow([
         "ville",
@@ -188,43 +249,67 @@ with open(OUTPUT_FILE, "w", newline="", encoding="utf-8-sig") as f:
         tz = ZoneInfo(config["timezone"])
         unit_label = config["unit_label"]
 
-        # Date de la veille dans le fuseau horaire de la ville
-        yesterday = datetime.now(tz).date() - timedelta(days=1)
+        # ----------------------------------------------------
+        # Veille dans le fuseau horaire de la ville
+        # ----------------------------------------------------
 
-        # Bornes de la journée locale
+        yesterday = (
+            datetime.now(tz).date()
+            - timedelta(days=1)
+        )
+
+        # ----------------------------------------------------
+        # Début et fin de la journée locale
+        # ----------------------------------------------------
+
         start_local = datetime.combine(
             yesterday,
             datetime.min.time(),
             tzinfo=tz,
         )
+
         end_local = start_local + timedelta(days=1)
 
-        # Conversion des bornes en UTC pour l'API NWS
-        start_utc = start_local.astimezone(timezone.utc)
-        end_utc = end_local.astimezone(timezone.utc)
+        # Conversion en UTC pour l'API
+        start_utc = start_local.astimezone(
+            timezone.utc
+        )
+
+        end_utc = end_local.astimezone(
+            timezone.utc
+        )
 
         try:
-            raw_observations = fetch_nws_observations(
+
+            # ------------------------------------------------
+            # Récupération des METAR
+            # ------------------------------------------------
+
+            data = fetch_nws_metar_observations(
                 station,
                 start_utc,
                 end_utc,
             )
 
+            # ------------------------------------------------
+            # Extraction des températures
+            # ------------------------------------------------
+
+            observations = extract_temperature_observations(
+                data,
+                config["timezone"],
+            )
+
             temperatures = []
 
-            for temp_c, timestamp in raw_observations:
+            for temp_c, dt_local in observations:
 
-                dt_local = datetime.fromtimestamp(
-                    timestamp,
-                    tz=timezone.utc,
-                ).astimezone(tz)
-
-                # Sécurité : on conserve uniquement les observations
-                # appartenant réellement à la veille dans le fuseau local.
+                # Sécurité : on ne conserve que les
+                # observations appartenant à la veille locale.
                 if dt_local.date() != yesterday:
                     continue
 
-                # NWS fournit toujours la température en °C.
+                # NWS/AWC fournit temp en °C.
                 if unit_label == "°F":
                     temperature = round(
                         celsius_to_fahrenheit(temp_c)
@@ -232,11 +317,24 @@ with open(OUTPUT_FILE, "w", newline="", encoding="utf-8-sig") as f:
                 else:
                     temperature = round(temp_c)
 
-                temperatures.append((temperature, dt_local))
+                temperatures.append(
+                    (temperature, dt_local)
+                )
 
-            # Tri chronologique pour obtenir la première occurrence
-            # en cas d'égalité sur la température min/max.
-            temperatures.sort(key=lambda x: x[1])
+            # ------------------------------------------------
+            # Tri chronologique
+            #
+            # Permet de retenir la PREMIÈRE occurrence
+            # lorsqu'une température apparaît plusieurs fois.
+            # ------------------------------------------------
+
+            temperatures.sort(
+                key=lambda x: x[1]
+            )
+
+            # ------------------------------------------------
+            # Min / Max
+            # ------------------------------------------------
 
             if temperatures:
 
@@ -262,15 +360,27 @@ with open(OUTPUT_FILE, "w", newline="", encoding="utf-8-sig") as f:
 
                 print(
                     f"{city}: "
-                    f"min {min_temp}{unit_label} à {min_time.strftime('%H:%M')} | "
-                    f"max {max_temp}{unit_label} à {max_time.strftime('%H:%M')}"
+                    f"min {min_temp}{unit_label} "
+                    f"à {min_time.strftime('%H:%M')} | "
+                    f"max {max_temp}{unit_label} "
+                    f"à {max_time.strftime('%H:%M')}"
                 )
 
             else:
-                print(f"{city}: aucune observation disponible")
+
+                print(
+                    f"{city}: "
+                    "aucune observation disponible"
+                )
 
         except Exception as e:
-            print(f"{city}: ERREUR - {e}")
+
+            print(
+                f"{city}: ERREUR - {e}"
+            )
 
 
-print(f"\nTerminé : {OUTPUT_FILE} créé.")
+print(
+    f"\nTerminé : {OUTPUT_FILE} créé."
+)
+```
