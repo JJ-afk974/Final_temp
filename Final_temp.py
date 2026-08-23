@@ -2,6 +2,7 @@ import urllib.request
 import urllib.parse
 import json
 import csv
+import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -138,23 +139,22 @@ def celsius_to_fahrenheit(temp_c):
 
 
 # ============================================================
-# RÉCUPÉRATION DES METAR
+# RÉCUPÉRATION DES METAR POUR UNE STATION
 # ============================================================
 
-def fetch_nws_metar_observations(stations):
+def fetch_nws_metar_observations(station):
     """
-    Récupère les METAR des stations demandées.
+    Récupère les METAR des dernières 48 heures
+    pour une station.
 
-    L'API AWC/NWS accepte plusieurs identifiants ICAO
-    séparés par des virgules.
+    Source :
+        NOAA / NWS Aviation Weather Center
 
-    Les données sont demandées sur les dernières 48 heures.
+    Aucun token ni compte nécessaire.
     """
-
-    station_list = ",".join(stations)
 
     params = {
-        "ids": station_list,
+        "ids": station,
         "format": "json",
         "hours": "48",
     }
@@ -171,7 +171,6 @@ def fetch_nws_metar_observations(stations):
     )
 
     with urllib.request.urlopen(request) as response:
-
         data = json.loads(
             response.read().decode("utf-8")
         )
@@ -180,31 +179,30 @@ def fetch_nws_metar_observations(stations):
 
 
 # ============================================================
-# TRAITEMENT DES OBSERVATIONS
+# EXTRACTION DES TEMPÉRATURES
 # ============================================================
 
-def get_station_temperatures(
-    observations,
-    station,
+def extract_temperature_observations(
+    data,
     timezone_name,
     yesterday,
 ):
     """
-    Retourne les observations de température de la veille
-    pour une station donnée.
+    Extrait uniquement les observations de la veille
+    dans le fuseau horaire local de la station.
 
-    Résultat :
+    Retourne :
         [(temperature_c, datetime_local), ...]
     """
 
+    observations = []
+
     tz = ZoneInfo(timezone_name)
 
-    temperatures = []
+    if not isinstance(data, list):
+        return observations
 
-    for observation in observations:
-
-        if observation.get("icaoId") != station:
-            continue
+    for observation in data:
 
         temp_c = observation.get("temp")
         obs_time = observation.get("obsTime")
@@ -218,64 +216,29 @@ def get_station_temperatures(
         except (TypeError, ValueError):
             continue
 
-        # obsTime est un timestamp Unix UTC.
+        # obsTime = timestamp Unix UTC
         dt_utc = datetime.fromtimestamp(
             obs_time,
             tz=timezone.utc,
         )
 
-        # Conversion vers l'heure locale de la ville.
+        # Conversion en heure locale
         dt_local = dt_utc.astimezone(tz)
 
-        # On ne conserve que la veille locale.
+        # On ne garde que la veille locale
         if dt_local.date() != yesterday:
             continue
 
-        temperatures.append(
+        observations.append(
             (temp_c, dt_local)
         )
 
-    # Tri chronologique.
-    temperatures.sort(
+    # Tri chronologique
+    observations.sort(
         key=lambda x: x[1]
     )
 
-    return temperatures
-
-
-# ============================================================
-# PRÉPARATION DES STATIONS
-# ============================================================
-
-stations = [
-    config["station"]
-    for config in CITIES.values()
-]
-
-
-# ============================================================
-# RÉCUPÉRATION UNIQUE DES DONNÉES
-# ============================================================
-
-try:
-
-    print("Récupération des METAR NWS/NOAA...")
-
-    all_observations = fetch_nws_metar_observations(
-        stations
-    )
-
-    print(
-        f"{len(all_observations)} observations reçues."
-    )
-
-except Exception as e:
-
-    print(
-        f"ERREUR lors de la récupération NWS : {e}"
-    )
-
-    raise SystemExit(1)
+    return observations
 
 
 # ============================================================
@@ -305,7 +268,7 @@ with open(
     ])
 
     # ========================================================
-    # TRAITEMENT DE CHAQUE VILLE
+    # TRAITEMENT DES VILLES
     # ========================================================
 
     for city, config in CITIES.items():
@@ -317,7 +280,7 @@ with open(
         tz = ZoneInfo(timezone_name)
 
         # ----------------------------------------------------
-        # Veille dans le fuseau horaire local
+        # Date de la veille dans le fuseau local
         # ----------------------------------------------------
 
         yesterday = (
@@ -325,20 +288,39 @@ with open(
             - timedelta(days=1)
         )
 
+        print(
+            f"\n{city} ({station})..."
+        )
+
         try:
 
-            temperatures_c = get_station_temperatures(
-                all_observations,
-                station,
+            # ------------------------------------------------
+            # Une requête par station
+            # ------------------------------------------------
+
+            data = fetch_nws_metar_observations(
+                station
+            )
+
+            print(
+                f"  {len(data)} observations reçues"
+            )
+
+            # ------------------------------------------------
+            # Extraction de la veille
+            # ------------------------------------------------
+
+            observations = extract_temperature_observations(
+                data,
                 timezone_name,
                 yesterday,
             )
 
-            if not temperatures_c:
+            if not observations:
 
                 print(
-                    f"{city}: aucune observation disponible "
-                    f"(station {station})"
+                    f"  Aucune observation pour "
+                    f"la veille ({yesterday})"
                 )
 
                 continue
@@ -349,16 +331,13 @@ with open(
 
             temperatures = []
 
-            for temp_c, dt_local in temperatures_c:
+            for temp_c, dt_local in observations:
 
                 if unit_label == "°F":
-
                     temperature = round(
                         celsius_to_fahrenheit(temp_c)
                     )
-
                 else:
-
                     temperature = round(temp_c)
 
                 temperatures.append(
@@ -368,9 +347,9 @@ with open(
             # ------------------------------------------------
             # Min / Max
             #
-            # La liste étant triée chronologiquement,
-            # min()/max() retiennent la première occurrence
-            # en cas d'égalité.
+            # La liste est déjà triée chronologiquement.
+            # En cas d'égalité, min()/max() retiennent donc
+            # la première occurrence.
             # ------------------------------------------------
 
             min_temp, min_time = min(
@@ -384,7 +363,7 @@ with open(
             )
 
             # ------------------------------------------------
-            # Écriture CSV
+            # Écriture dans le CSV
             # ------------------------------------------------
 
             writer.writerow([
@@ -398,8 +377,7 @@ with open(
             ])
 
             print(
-                f"{city}: "
-                f"min {min_temp}{unit_label} "
+                f"  min {min_temp}{unit_label} "
                 f"à {min_time.strftime('%H:%M')} | "
                 f"max {max_temp}{unit_label} "
                 f"à {max_time.strftime('%H:%M')}"
@@ -408,8 +386,11 @@ with open(
         except Exception as e:
 
             print(
-                f"{city}: ERREUR - {e}"
+                f"  ERREUR : {e}"
             )
+
+        # Petite pause entre les requêtes
+        time.sleep(1)
 
 
 # ============================================================
