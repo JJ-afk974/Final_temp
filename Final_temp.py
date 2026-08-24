@@ -65,7 +65,7 @@ CITIES = {
         "timezone": "Europe/Warsaw",
         "unit_label": "°C",
     },
-    "Helsinki": {
+    "Helsinski": {
         "station": "EFHK",
         "timezone": "Europe/Helsinki",
         "unit_label": "°C",
